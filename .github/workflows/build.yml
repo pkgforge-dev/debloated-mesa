@@ -1,6 +1,6 @@
 name: build & release mesa-llvm-mini
 concurrency:
-  group: build-${{ github.ref }}
+  group: "build-${{ github.ref }}"
   cancel-in-progress: true
 
 on:
@@ -15,7 +15,7 @@ jobs:
       actions: read
       security-events: write
       contents: write
-    runs-on: ${{ matrix.runs-on }}
+    runs-on: "${{ matrix.runs-on }}"
     continue-on-error: false
     strategy:
       fail-fast: false
@@ -54,12 +54,12 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: mesa-llvm-mini-${{ matrix.arch }}
-          path: *.pkg.tar.*
+          name: "mesa-llvm-mini-${{ matrix.arch }}"
+          path: "*.pkg.tar.*"
 
   release:
     name: "release"
-    if: ${{ github.ref_name == 'main' }}
+    if: github.ref_name == 'main'
     needs: [build]
     permissions:
       actions: read
@@ -79,6 +79,6 @@ jobs:
           tag_name: continuous
           prerelease: false
           make_latest: true
-          target_commitish: ${{ github.sha }}
+          target_commitish: "${{ github.sha }}"
           files: |
             *.pkg.tar.*
