@@ -33,24 +33,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: prepare container
-        run: |
-          pacman-key --init
-          pacman -Syy --noconfirm archlinux-keyring
-          pacman -Syu --noconfirm \
-            base-devel     \
-            ccache         \
-            cmake          \
-            curl           \
-            git            \
-            ninja          \
-            meson          \
-            python         \
-            rust-bindgen
-          cp aux/makepkg.conf.${{ matrix.arch }} /etc/makepkg.conf
-
+        run: /bin/sh ./bin/prepare-build
       - name: build package
         run: makepkg -fs --noconfirm
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
