@@ -138,6 +138,7 @@ cmake -G Ninja \
 
 _echo "Starting build..."
 
+export LD_LIBRARY_PATH="$LLVM_BUILD/lib:$LD_LIBRARY_PATH"
 ninja -C "$LLVM_BUILD" -j"$(nproc)"
 DESTDIR="$LLVM_PREFIX" ninja -C "$LLVM_BUILD" install
 
