@@ -43,7 +43,7 @@ pkgrel=${_rest#*-}
 
 source=(
 	"https://archive.mesa3d.org/mesa-$pkgver.tar.xz"
-	"build-llvm-14"
+	"build-llvm"
 	"build-mesa"
 )
 
@@ -60,22 +60,22 @@ prepare() {
 build() {
 	cd "$srcdir"
 
-	chmod +x ./build-llvm-14 ./build-mesa
+	chmod +x ./build-llvm ./build-mesa
 
-	./build-llvm-14
+	./build-llvm
 	./build-mesa mesa-src
 }
 
 package() {
 	# LLVM shared library
-	install -Dm755 /tmp/llvm14/usr/lib/libLLVM-14.so "$pkgdir"/usr/lib/libLLVM-14.so
-	ln -sf libLLVM-14.so "$pkgdir"/usr/lib/libLLVM-14.so.14
+	install -Dm755 /tmp/llvm/usr/lib/libLLVM-15.so "$pkgdir"/usr/lib/libLLVM-15.so
+	ln -sf libLLVM-15.so "$pkgdir"/usr/lib/libLLVM-15.so.15
 
 	# Mesa — ninja install creates everything (dirs, symlinks, ICDs, GLVND, pkgconfig)
 	DESTDIR="$pkgdir" ninja -C "$srcdir"/mesa-build install
 
 	# License files
-	install -Dm644 "$srcdir"/llvm-project-14.0.6.src/llvm/LICENSE.TXT \
+	install -Dm644 "$srcdir"/llvm-project-15.0.7.src/llvm/LICENSE.TXT \
 		"$pkgdir"/usr/share/licenses/"$pkgname"/LICENSE.LLVM 2>/dev/null || true
 	install -Dm644 "$srcdir"/mesa-src/docs/license.rst \
 		"$pkgdir"/usr/share/licenses/"$pkgname"/license.rst 2>/dev/null || true

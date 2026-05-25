@@ -41,10 +41,10 @@ VULKAN_LAYERS=device-select,anti-lag
 # Patches #
 # # # # # #
 
-# Relax LLVM version checks so LLVM 14 is accepted
-sed -i \
-	-e "s/_llvm_version = '>= 18\\.0\\.0'/_llvm_version = '>= 8.0.0'/" \
-	-e "s/_llvm_version = '>= 15\\.0\\.0'/_llvm_version = '>= 8.0.0'/" \
+# Relax ALL LLVM version checks so LLVM 15 is accepted
+# (catches future Mesa bumps e.g. >= 19.0.0, >= 20.0.0 without editing)
+sed -i -E \
+	"s/_llvm_version = '>= [0-9]+\\.[0-9]+\\.[0-9]+'/_llvm_version = '>= 8.0.0'/g" \
 	"$MESA_SRC"/meson.build
 
 # Make amdgpu LLVM module conditional on amd_with_llvm
@@ -63,9 +63,9 @@ sed -i \
 	"$MESA_SRC"/src/compiler/clc/clc_helpers.cpp
 
 # Point to our LLVM
-export PATH="/tmp/llvm14/usr/bin:$PATH"
-export LD_LIBRARY_PATH="/tmp/llvm14/usr/lib"
-export PKG_CONFIG_PATH="/tmp/llvm14/usr/lib/pkgconfig"
+export PATH="/tmp/llvm/usr/bin:$PATH"
+export LD_LIBRARY_PATH="/tmp/llvm/usr/lib"
+export PKG_CONFIG_PATH="/tmp/llvm/usr/lib/pkgconfig"
 
 # Default CFLAGS matching Arch makepkg.conf (-O2) — only apply when not running via makepkg
 export CFLAGS="${CFLAGS:=-march=x86-64 -mtune=generic -O2 -pipe -fno-plt -fexceptions -fno-fast-math -Wformat -fcf-protection -fomit-frame-pointer -fno-strict-aliasing}"
@@ -81,6 +81,7 @@ meson setup "$MESA_BUILD"               \
 	--wrap-mode=default                   \
 	-D b_ndebug=true                      \
 	-D b_lto=false                        \
+	-D cpp_rtti=false                     \
 	-D gallium-drivers="$GALLIUM_DRIVERS" \
 	-D vulkan-drivers="$VULKAN_DRIVERS"   \
 	-D amd-use-llvm=false                 \

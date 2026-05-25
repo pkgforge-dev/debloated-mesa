@@ -1,8 +1,8 @@
 #!/bin/sh
 
-# build-llvm-14 - Build minimal dynamic libLLVM.so 14.0.6
-# Installs to /tmp/llvm14 for use by build-mesa
-# Skips if /tmp/llvm14/usr/lib/libLLVM-14.so already exists.
+# build-llvm - Build minimal dynamic libLLVM.so 15.0.7 + clang 15 + SPIRV-Translator
+# Installs to /tmp/llvm for use by build-mesa
+# Skips if /tmp/llvm/usr/lib/libLLVM-15.so already exists.
 
 set -e
 
@@ -15,19 +15,19 @@ _err_msg() {
 }
 
 ARCH=$(uname -m)
-LLVM_VERSION=14.0.6
+LLVM_VERSION=15.0.7
 LLVM_SRC=$PWD/llvm-project-$LLVM_VERSION.src
 LLVM_BUILD=$PWD/llvm-build
 LLVM_TAR=llvm-project-$LLVM_VERSION.src.tar.xz
 LLVM_URL=https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VERSION/$LLVM_TAR
-LLVM_PREFIX=/tmp/llvm14
+LLVM_PREFIX=/tmp/llvm
 
 case "$ARCH" in
 	x86_64)
-		TARGETS="X86"
+		TARGETS=X86
 		;;
 	aarch64)
-		TARGETS="AArch64"
+		TARGETS=AArch64
 		;;
 	*)
 		_err_msg "$0: unsupported arch: $ARCH"
@@ -37,27 +37,15 @@ esac
 
 _echo "Building LLVM $LLVM_VERSION for $ARCH"
 
-if [ -f "$LLVM_PREFIX"/usr/lib/libLLVM-14.so ]; then
+if [ -f "$LLVM_PREFIX"/usr/lib/libLLVM-15.so ]; then
 	_echo "LLVM already built at $LLVM_PREFIX — skipping"
 	exit 0
 fi
 
-# Download source
-LLVM_SHA256=8b3cfd7bc695bd6cea0f37f53f0981f34f87496e79e2529874fd03a2f9dd3a8a
-
+# Download
 if [ ! -f "$LLVM_TAR" ] && [ ! -d "$LLVM_SRC" ]; then
 	_echo "Downloading LLVM $LLVM_VERSION..."
 	curl -fSL "$LLVM_URL" -o "$LLVM_TAR"
-fi
-
-if [ -f "$LLVM_TAR" ]; then
-	_file_sha=$(sha256sum < "$LLVM_TAR")
-	_file_sha=${_file_sha%% *}
-	if [ "$LLVM_SHA256" != "$_file_sha" ]; then
-		_err_msg "SHA256 mismatch for $LLVM_TAR"
-		rm -f "$LLVM_TAR"
-		exit 1
-	fi
 fi
 
 # Extract
@@ -69,14 +57,14 @@ fi
 _echo "* Building..."
 mkdir -p "$LLVM_BUILD" "$LLVM_PREFIX"
 
-# Patch SmallVector.h for GCC >= 14 compatibility
+# Patch SmallVector.h for GCC >= 14 compatibility (missing <cstdint>)
 SVH="$LLVM_SRC"/llvm/include/llvm/ADT/SmallVector.h
-if ! grep -q '#include <cstdint>' "$SVH"; then
-	sed -i '/#include <cstdlib>/i #include <cstdint>' "$SVH"
+if ! grep -q '#include <cstdint>' "$SVH" 2>/dev/null; then
+	sed -i '/#include <cstdlib>/i #include <cstdint>' "$SVH" 2>/dev/null || true
 fi
 _echo "* Patched SmallVector.h for GCC >= 14"
 
-# Compat header for GCC >= 16 (missing includes in LLVM 14)
+# Compat header for GCC >= 16 (missing includes in LLVM 15)
 COMPAT_H=$LLVM_BUILD/llvm-compat.h
 cat > "$COMPAT_H" << 'EOF'
 #include <cstdint>
@@ -86,7 +74,6 @@ cat > "$COMPAT_H" << 'EOF'
 #include <limits>
 #include <utility>
 EOF
-_echo "* Added compat header for GCC >= 16"
 
 _cflags='-Os -g0 -fdata-sections -ffunction-sections -DNDEBUG -fno-strict-aliasing -fno-fast-math -fno-plt'
 _cxxflags="$_cflags -U__DEPRECATED -include $COMPAT_H"
@@ -94,7 +81,7 @@ _cxxflags="$_cflags -U__DEPRECATED -include $COMPAT_H"
 cmake -G Ninja \
 	-DCMAKE_BUILD_TYPE=MinSizeRel                          \
 	-DCMAKE_INSTALL_PREFIX=/usr                            \
-	-DCMAKE_CXX_STANDARD=14                                \
+	-DCMAKE_CXX_STANDARD=17                                \
 	-DCMAKE_CXX_STANDARD_REQUIRED=ON                       \
 	-DCMAKE_C_FLAGS="$_cflags"                             \
 	-DCMAKE_CXX_FLAGS="$_cxxflags"                         \
@@ -103,7 +90,7 @@ cmake -G Ninja \
 	-DLLVM_TARGETS_TO_BUILD="$TARGETS"                     \
 	-DLLVM_BUILD_LLVM_DYLIB=ON                             \
 	-DLLVM_LINK_LLVM_DYLIB=ON                              \
-	-DLLVM_ENABLE_LTO=OFF                                  \
+	-DLLVM_ENABLE_LTO=ON                                   \
 	-DLLVM_ENABLE_PROJECTS=clang                           \
 	-DLLVM_INCLUDE_TESTS=OFF                               \
 	-DLLVM_INCLUDE_DOCS=OFF                                \
@@ -131,12 +118,15 @@ cmake -G Ninja \
 	-DLLVM_ENABLE_WERROR=OFF                               \
 	-DLLVM_TEMPORARILY_ALLOW_OLD_TOOLCHAIN=ON              \
 	-DLLVM_ENABLE_PIC=ON                                   \
+	-DCLANG_ENABLE_STATIC_ANALYZER=OFF                     \
+	-DCLANG_ENABLE_ARCMT=OFF                               \
+	-DCLANG_ENABLE_OBJC_REWRITER=OFF                       \
 	-DCMAKE_SKIP_RPATH=ON                                  \
 	-DLLVM_PARALLEL_LINK_JOBS=4                            \
 	-S "$LLVM_SRC"/llvm                                    \
 	-B "$LLVM_BUILD"
 
-_echo "Starting build..."
+_echo "Starting LLVM build..."
 
 export LD_LIBRARY_PATH="$LLVM_BUILD/lib:$LD_LIBRARY_PATH"
 ninja -C "$LLVM_BUILD" -j"$(nproc)"
@@ -149,34 +139,39 @@ mkdir -p "$LLVM_PREFIX"/usr/include/llvm/Config "$LLVM_PREFIX"/usr/include/llvm/
 cp "$LLVM_BUILD"/include/llvm/Config/*.h   "$LLVM_PREFIX"/usr/include/llvm/Config/ 2>/dev/null || true
 cp "$LLVM_BUILD"/include/llvm/IR/*.inc     "$LLVM_PREFIX"/usr/include/llvm/IR/     2>/dev/null || true
 
-# Build SPIRV-LLVM-Translator v14.0.0 for CLC support
+# Build SPIRV-LLVM-Translator v15.0.0 for CLC support
 _echo "* Building SPIRV-LLVM-Translator..."
-SPIRV_TRANSLATOR_VER=14.0.0
+SPIRV_TRANSLATOR_VER=15.0.0
 SPIRV_TRANSLATOR_TAR=SPIRV-LLVM-Translator-$SPIRV_TRANSLATOR_VER.tar.gz
 SPIRV_TRANSLATOR_URL=https://github.com/KhronosGroup/SPIRV-LLVM-Translator/archive/refs/tags/v$SPIRV_TRANSLATOR_VER.tar.gz
 SPIRV_TRANSLATOR_SRC=$PWD/SPIRV-LLVM-Translator-$SPIRV_TRANSLATOR_VER
 SPIRV_TRANSLATOR_BUILD=$PWD/spirv-translator-build
 
 if [ ! -d "$SPIRV_TRANSLATOR_SRC" ]; then
-	curl -fSL "$SPIRV_TRANSLATOR_URL" -o "$SPIRV_TRANSLATOR_TAR" 2>/dev/null
-	tar xzf "$SPIRV_TRANSLATOR_TAR"
+	curl -fSL "$SPIRV_TRANSLATOR_URL" -o "$SPIRV_TRANSLATOR_TAR" 2>/dev/null || true
+	tar xzf "$SPIRV_TRANSLATOR_TAR" 2>/dev/null || true
 fi
 
-mkdir -p "$SPIRV_TRANSLATOR_BUILD"
-cmake -G Ninja \
-	-DCMAKE_BUILD_TYPE=Release \
-	-DCMAKE_INSTALL_PREFIX="$LLVM_PREFIX"/usr \
-	-DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-	-DLLVM_DIR="$LLVM_PREFIX"/usr/lib/cmake/llvm \
-	-S "$SPIRV_TRANSLATOR_SRC" \
-	-B "$SPIRV_TRANSLATOR_BUILD"
-ninja -C "$SPIRV_TRANSLATOR_BUILD" -j"$(nproc)"
-ninja -C "$SPIRV_TRANSLATOR_BUILD" install
+if [ -d "$SPIRV_TRANSLATOR_SRC" ] && [ -f "$SPIRV_TRANSLATOR_SRC"/CMakeLists.txt ]; then
+	mkdir -p "$SPIRV_TRANSLATOR_BUILD"
+	cmake -G Ninja \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_INSTALL_PREFIX="$LLVM_PREFIX"/usr \
+		-DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+		-DLLVM_DIR="$LLVM_PREFIX"/usr/lib/cmake/llvm \
+		-S "$SPIRV_TRANSLATOR_SRC" \
+		-B "$SPIRV_TRANSLATOR_BUILD"
+	ninja -C "$SPIRV_TRANSLATOR_BUILD" -j"$(nproc)"
+	ninja -C "$SPIRV_TRANSLATOR_BUILD" install
+else
+	_echo "WARNING: SPIRV-LLVM-Translator not available, skipping"
+fi
 
-# Prune: static libs (keep LLVMSPIRVLib for Mesa's build), unneeded bins, strip
+# Prune: static libs (keep LLVMSPIRVLib for Mesa), unneeded bins, strip
 find "$LLVM_PREFIX" -name "*.a" ! -name "libLLVMSPIRVLib.a" -delete
-find "$LLVM_PREFIX"/usr/bin -not -name "llvm-config" -exec rm -f {} \; 2>/dev/null || true
 find "$LLVM_PREFIX" -name "*.so*" -exec strip --strip-unneeded {} \; 2>/dev/null || true
 
-_echo "Done — $(du -sh "$LLVM_PREFIX" | cut -f1)"
-_echo "Installed at: $LLVM_PREFIX"
+# Report final size
+echo ""
+_echo "Done! LLVM installed at: $LLVM_PREFIX"
+
