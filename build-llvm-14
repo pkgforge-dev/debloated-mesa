@@ -1,0 +1,180 @@
+#!/bin/sh
+
+# build-llvm-14 - Build minimal dynamic libLLVM.so 14.0.6
+# Installs to /tmp/llvm14 for use by build-mesa
+# Skips if /tmp/llvm14/usr/lib/libLLVM-14.so already exists.
+
+set -e
+
+_echo() {
+	printf '\033[1;92m%s\033[0m\n' " $*"
+}
+
+_err_msg() {
+	>&2 printf '\033[1;31m%s\033[0m\n' " $*"
+}
+
+ARCH=$(uname -m)
+LLVM_VERSION=14.0.6
+LLVM_SRC=$PWD/llvm-project-$LLVM_VERSION.src
+LLVM_BUILD=$PWD/llvm-build
+LLVM_TAR=llvm-project-$LLVM_VERSION.src.tar.xz
+LLVM_URL=https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VERSION/$LLVM_TAR
+LLVM_PREFIX=/tmp/llvm14
+
+case "$ARCH" in
+	x86_64)
+		TARGETS="X86"
+		;;
+	aarch64)
+		TARGETS="AArch64"
+		;;
+	*)
+		_err_msg "$0: unsupported arch: $ARCH"
+		exit 1
+		;;
+esac
+
+_echo "Building LLVM $LLVM_VERSION for $ARCH"
+
+if [ -f "$LLVM_PREFIX"/usr/lib/libLLVM-14.so ]; then
+	_echo "LLVM already built at $LLVM_PREFIX — skipping"
+	exit 0
+fi
+
+# Download source
+LLVM_SHA256=8b3cfd7bc695bd6cea0f37f53f0981f34f87496e79e2529874fd03a2f9dd3a8a
+
+if [ ! -f "$LLVM_TAR" ] && [ ! -d "$LLVM_SRC" ]; then
+	_echo "Downloading LLVM $LLVM_VERSION..."
+	curl -fSL "$LLVM_URL" -o "$LLVM_TAR"
+fi
+
+if [ -f "$LLVM_TAR" ]; then
+	_file_sha=$(sha256sum < "$LLVM_TAR")
+	_file_sha=${_file_sha%% *}
+	if [ "$LLVM_SHA256" != "$_file_sha" ]; then
+		_err_msg "SHA256 mismatch for $LLVM_TAR"
+		rm -f "$LLVM_TAR"
+		exit 1
+	fi
+fi
+
+# Extract
+if [ ! -d "$LLVM_SRC" ]; then
+	_echo "Extracting..."
+	tar xf "$LLVM_TAR"
+fi
+
+_echo "* Building..."
+mkdir -p "$LLVM_BUILD" "$LLVM_PREFIX"
+
+# Patch SmallVector.h for GCC >= 14 compatibility
+SVH="$LLVM_SRC"/llvm/include/llvm/ADT/SmallVector.h
+if ! grep -q '#include <cstdint>' "$SVH"; then
+	sed -i '/#include <cstdlib>/i #include <cstdint>' "$SVH"
+fi
+_echo "* Patched SmallVector.h for GCC >= 14"
+
+# Compat header for GCC >= 16 (missing includes in LLVM 14)
+COMPAT_H=$LLVM_BUILD/llvm-compat.h
+cat > "$COMPAT_H" << 'EOF'
+#include <cstdint>
+#include <cstddef>
+#include <cstdlib>
+#include <cstring>
+#include <limits>
+#include <utility>
+EOF
+_echo "* Added compat header for GCC >= 16"
+
+_cflags='-Os -g0 -fdata-sections -ffunction-sections -DNDEBUG -fno-strict-aliasing -fno-fast-math -fno-plt'
+_cxxflags="$_cflags -U__DEPRECATED -include $COMPAT_H"
+
+cmake -G Ninja \
+	-DCMAKE_BUILD_TYPE=MinSizeRel                          \
+	-DCMAKE_INSTALL_PREFIX=/usr                            \
+	-DCMAKE_CXX_STANDARD=14                                \
+	-DCMAKE_CXX_STANDARD_REQUIRED=ON                       \
+	-DCMAKE_C_FLAGS="$_cflags"                             \
+	-DCMAKE_CXX_FLAGS="$_cxxflags"                         \
+	-DCMAKE_EXE_LINKER_FLAGS="-Wl,-s -Wl,--gc-sections"    \
+	-DCMAKE_SHARED_LINKER_FLAGS="-Wl,-s -Wl,--gc-sections" \
+	-DLLVM_TARGETS_TO_BUILD="$TARGETS"                     \
+	-DLLVM_BUILD_LLVM_DYLIB=ON                             \
+	-DLLVM_LINK_LLVM_DYLIB=ON                              \
+	-DLLVM_ENABLE_LTO=OFF                                  \
+	-DLLVM_ENABLE_PROJECTS=clang                           \
+	-DLLVM_INCLUDE_TESTS=OFF                               \
+	-DLLVM_INCLUDE_DOCS=OFF                                \
+	-DLLVM_INCLUDE_EXAMPLES=OFF                            \
+	-DLLVM_INCLUDE_BENCHMARKS=OFF                          \
+	-DLLVM_ENABLE_DOCS=OFF                                 \
+	-DLLVM_ENABLE_SPHINX=OFF                               \
+	-DLLVM_ENABLE_BINDINGS=OFF                             \
+	-DLLVM_ENABLE_CURL=OFF                                 \
+	-DLLVM_ENABLE_UNWIND_TABLES=OFF                        \
+	-DLLVM_ENABLE_LIBXML2=OFF                              \
+	-DLLVM_ENABLE_TERMINFO=OFF                             \
+	-DLLVM_ENABLE_ZSTD=OFF                                 \
+	-DLLVM_ENABLE_ZLIB=OFF                                 \
+	-DLLVM_ENABLE_FFI=OFF                                  \
+	-DLLVM_ENABLE_ASSERTIONS=OFF                           \
+	-DLLVM_ENABLE_BACKTRACES=OFF                           \
+	-DLLVM_ENABLE_CRASH_OVERRIDES=OFF                      \
+	-DLLVM_ENABLE_LIBEDIT=OFF                              \
+	-DLLVM_ENABLE_PLUGINS=OFF                              \
+	-DLLVM_INSTALL_GTEST=OFF                               \
+	-DLLVM_INCLUDE_GOOGLETEST=OFF                          \
+	-DLLVM_APPEND_VC_REV=OFF                               \
+	-DLLVM_ENABLE_WARNINGS=OFF                             \
+	-DLLVM_ENABLE_WERROR=OFF                               \
+	-DLLVM_TEMPORARILY_ALLOW_OLD_TOOLCHAIN=ON              \
+	-DLLVM_ENABLE_PIC=ON                                   \
+	-DCMAKE_SKIP_RPATH=ON                                  \
+	-DLLVM_PARALLEL_LINK_JOBS=4                            \
+	-S "$LLVM_SRC"/llvm                                    \
+	-B "$LLVM_BUILD"
+
+_echo "Starting build..."
+
+ninja -C "$LLVM_BUILD" -j"$(nproc)"
+DESTDIR="$LLVM_PREFIX" ninja -C "$LLVM_BUILD" install
+
+_echo "Installing headers..."
+
+# Copy generated headers from build tree (needed by mesa)
+mkdir -p "$LLVM_PREFIX"/usr/include/llvm/Config "$LLVM_PREFIX"/usr/include/llvm/IR
+cp "$LLVM_BUILD"/include/llvm/Config/*.h   "$LLVM_PREFIX"/usr/include/llvm/Config/ 2>/dev/null || true
+cp "$LLVM_BUILD"/include/llvm/IR/*.inc     "$LLVM_PREFIX"/usr/include/llvm/IR/     2>/dev/null || true
+
+# Build SPIRV-LLVM-Translator v14.0.0 for CLC support
+_echo "* Building SPIRV-LLVM-Translator..."
+SPIRV_TRANSLATOR_VER=14.0.0
+SPIRV_TRANSLATOR_TAR=SPIRV-LLVM-Translator-$SPIRV_TRANSLATOR_VER.tar.gz
+SPIRV_TRANSLATOR_URL=https://github.com/KhronosGroup/SPIRV-LLVM-Translator/archive/refs/tags/v$SPIRV_TRANSLATOR_VER.tar.gz
+SPIRV_TRANSLATOR_SRC=$PWD/SPIRV-LLVM-Translator-$SPIRV_TRANSLATOR_VER
+SPIRV_TRANSLATOR_BUILD=$PWD/spirv-translator-build
+
+if [ ! -d "$SPIRV_TRANSLATOR_SRC" ]; then
+	curl -fSL "$SPIRV_TRANSLATOR_URL" -o "$SPIRV_TRANSLATOR_TAR" 2>/dev/null
+	tar xzf "$SPIRV_TRANSLATOR_TAR"
+fi
+
+mkdir -p "$SPIRV_TRANSLATOR_BUILD"
+cmake -G Ninja \
+	-DCMAKE_BUILD_TYPE=Release \
+	-DCMAKE_INSTALL_PREFIX="$LLVM_PREFIX"/usr \
+	-DLLVM_DIR="$LLVM_PREFIX"/usr/lib/cmake/llvm \
+	-S "$SPIRV_TRANSLATOR_SRC" \
+	-B "$SPIRV_TRANSLATOR_BUILD"
+ninja -C "$SPIRV_TRANSLATOR_BUILD" -j"$(nproc)"
+ninja -C "$SPIRV_TRANSLATOR_BUILD" install
+
+# Prune: static libs (keep LLVMSPIRVLib for Mesa's build), unneeded bins, strip
+find "$LLVM_PREFIX" -name "*.a" ! -name "libLLVMSPIRVLib.a" -delete
+find "$LLVM_PREFIX"/usr/bin -not -name "llvm-config" -exec rm -f {} \; 2>/dev/null || true
+find "$LLVM_PREFIX" -name "*.so*" -exec strip --strip-unneeded {} \; 2>/dev/null || true
+
+_echo "Done — $(du -sh "$LLVM_PREFIX" | cut -f1)"
+_echo "Installed at: $LLVM_PREFIX"

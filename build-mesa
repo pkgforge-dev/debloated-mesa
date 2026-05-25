@@ -1,0 +1,106 @@
+#!/bin/sh
+
+set -e
+
+_echo() {
+	printf '\033[1;92m%s\033[0m\n' " $*"
+}
+
+_err_msg() {
+	>&2 printf '\033[1;31m%s\033[0m\n' " $*"
+}
+
+ARCH=$(uname -m)
+MESA_SRC="$1"
+MESA_BUILD=$PWD/mesa-build
+
+if [ -z "$MESA_SRC" ] || [ ! -f "$MESA_SRC"/meson.build ]; then
+	_err_msg "Usage: $0 <source_dir>"
+	_err_msg "  source_dir must contain meson.build"
+	exit 1
+fi
+
+case "$ARCH" in
+	x86_64)
+		GALLIUM_DRIVERS="crocus,iris,r600,d3d12,nouveau,radeonsi,llvmpipe,virgl,zink,i915"
+		VULKAN_DRIVERS="intel,intel_hasvk,amd,nouveau,virtio,gfxstream,swrast"
+		;;
+	aarch64)
+		GALLIUM_DRIVERS="asahi,freedreno,etnaviv,lima,panfrost,rocket,v3d,vc4,d3d12,nouveau,radeonsi,llvmpipe,virgl,zink"
+		VULKAN_DRIVERS="asahi,broadcom,freedreno,panfrost,imagination,amd,nouveau,virtio,gfxstream,swrast"
+		;;
+	*)
+		_err_msg "$0: unsupported arch: $ARCH"
+		exit 1
+		;;
+esac
+
+VULKAN_LAYERS=device-select,anti-lag
+
+# # # # # #
+# Patches #
+# # # # # #
+
+# Relax LLVM version checks so LLVM 14 is accepted
+sed -i \
+	-e "s/_llvm_version = '>= 18\\.0\\.0'/_llvm_version = '>= 8.0.0'/" \
+	-e "s/_llvm_version = '>= 15\\.0\\.0'/_llvm_version = '>= 8.0.0'/" \
+	"$MESA_SRC"/meson.build
+
+# Make amdgpu LLVM module conditional on amd_with_llvm
+sed -i \
+	"/llvm_modules += .*amdgpu.*bitreader.*ipo/c\  if amd_with_llvm\n    llvm_modules += ['amdgpu']\n  endif\n  llvm_modules += ['bitreader', 'ipo']" \
+	"$MESA_SRC"/meson.build
+
+# Use chosen LLVM version for LLVMSPIRVLib min version
+sed -i \
+	"s/_llvmspirvlib_min_version = '>= 15\\.0\\.0\\.0'/_llvmspirvlib_min_version = '>= @0@.0.0.0'.format(chosen_llvm_version_major)/" \
+	"$MESA_SRC"/meson.build
+
+# Patch clc_helpers.cpp: -no-opaque-pointers only valid for LLVM 15-16
+sed -i \
+	's/      "-no-opaque-pointers",/#if LLVM_VERSION_MAJOR >= 15 \&\& LLVM_VERSION_MAJOR < 17\n      "-no-opaque-pointers",\n#endif/' \
+	"$MESA_SRC"/src/compiler/clc/clc_helpers.cpp
+
+# Point to our LLVM
+export PATH="/tmp/llvm14/usr/bin:$PATH"
+export LD_LIBRARY_PATH="/tmp/llvm14/usr/lib"
+export PKG_CONFIG_PATH="/tmp/llvm14/usr/lib/pkgconfig"
+
+# Default CFLAGS matching Arch makepkg.conf (-O2) — only apply when not running via makepkg
+export CFLAGS="${CFLAGS:=-march=x86-64 -mtune=generic -O2 -pipe -fno-plt -fexceptions -fno-fast-math -Wformat -fcf-protection -fomit-frame-pointer -fno-strict-aliasing}"
+export CXXFLAGS="${CXXFLAGS:=$CFLAGS -fvisibility-inlines-hidden}"
+export LDFLAGS="${LDFLAGS:=-Wl,-O1 -Wl,--sort-common -Wl,--as-needed -Wl,-z,relro -Wl,-z,now -Wl,-z,pack-relative-relocs}"
+
+_echo "Configuring Mesa for $ARCH..."
+meson setup "$MESA_BUILD"               \
+	--prefix /usr                         \
+	--libexecdir lib                      \
+	--sbindir bin                         \
+	--buildtype plain                     \
+	--wrap-mode=default                   \
+	-D b_ndebug=true                      \
+	-D b_lto=false                        \
+	-D gallium-drivers="$GALLIUM_DRIVERS" \
+	-D vulkan-drivers="$VULKAN_DRIVERS"   \
+	-D amd-use-llvm=false                 \
+	-D llvm-orcjit=false                  \
+	-D shared-llvm=enabled                \
+	-D gallium-rusticl=false              \
+	-D gallium-extra-hud=false            \
+	-D gallium-va=enabled                 \
+	-D gallium-mediafoundation=disabled   \
+	-D gles1=disabled                     \
+	-D gles2=enabled                      \
+	-D valgrind=disabled                  \
+	-D libunwind=disabled                 \
+	-D intel-rt=disabled                  \
+	-D android-libbacktrace=disabled      \
+	-D microsoft-clc=disabled             \
+	-D video-codecs=all                   \
+	-D vulkan-layers="$VULKAN_LAYERS"     \
+	-D tools=[]                           \
+	"$MESA_SRC"
+
+_echo "Building Mesa..."
+ninja -C "$MESA_BUILD" -j"$(nproc)"
