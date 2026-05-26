@@ -14,7 +14,7 @@ depends=(
 	'wayland' 'spirv-tools' 'libedit' 'libxml2' 'lm_sensors' 'libpng'
 	'libva' 'libpciaccess' 'libxrandr' 'libinput' 'elfutils' 'libelf'
 )
-makedepends=('cmake' 'ninja' 'meson' 'python' 'curl' 'rust-bindgen')
+makedepends=('cmake' 'ninja' 'meson' 'python' 'curl' 'rust-bindgen' 'glslang' 'directx-headers')
 conflicts=(
 	'mesa' 'vulkan-intel' 'vulkan-radeon' 'vulkan-nouveau'
 	'vulkan-virtio' 'vulkan-swrast' 'vulkan-dzn' 'vulkan-gfxstream'
