@@ -42,14 +42,15 @@ VULKAN_LAYERS=device-select,anti-lag
 # # # # # #
 
 # Relax ALL LLVM version checks so LLVM 15 is accepted
-# (catches future Mesa bumps e.g. >= 19.0.0, >= 20.0.0 without editing)
 sed -i -E \
 	"s/_llvm_version = '>= [0-9]+\\.[0-9]+\\.[0-9]+'/_llvm_version = '>= 8.0.0'/g" \
 	"$MESA_SRC"/meson.build
 
-# Make amdgpu LLVM module conditional on amd_with_llvm
+# Relax llvm_modules: remove 'engine' (not a real component in LLVM 15
+# without clang) and make amdgpu/bitreader/ipo conditional on amd_with_llvm
+sed -i "s/'engine', //" "$MESA_SRC"/meson.build
 sed -i \
-	"/llvm_modules += .*amdgpu.*bitreader.*ipo/c\  if amd_with_llvm\n    llvm_modules += ['amdgpu']\n  endif\n  llvm_modules += ['bitreader', 'ipo']" \
+	"/llvm_modules += .*amdgpu.*bitreader.*ipo/c\  if amd_with_llvm\n    llvm_modules += ['amdgpu', 'bitreader', 'ipo']\n  endif" \
 	"$MESA_SRC"/meson.build
 
 # Use chosen LLVM version for LLVMSPIRVLib min version
@@ -70,7 +71,7 @@ export PKG_CONFIG_PATH="/tmp/llvm/usr/lib/pkgconfig"
 # Default CFLAGS matching Arch makepkg.conf (-O2) — only apply when not running via makepkg
 export CFLAGS="${CFLAGS:=-march=x86-64 -mtune=generic -O2 -pipe -fno-plt -fexceptions -fno-fast-math -Wformat -fcf-protection -fomit-frame-pointer -fno-strict-aliasing}"
 export CXXFLAGS="${CXXFLAGS:=$CFLAGS -fvisibility-inlines-hidden}"
-export LDFLAGS="${LDFLAGS:=-Wl,-O1 -Wl,--sort-common -Wl,--as-needed -Wl,-z,relro -Wl,-z,now -Wl,-z,pack-relative-relocs}"
+export LDFLAGS="${LDFLAGS:=-Wl,-O1 -Wl,--sort-common -Wl,--as-needed -Wl,-z,relro -Wl,-z,now -Wl,-z,pack-relative-relocs} -L/tmp/llvm/usr/lib -lLLVM-15"
 
 _echo "Configuring Mesa for $ARCH..."
 meson setup "$MESA_BUILD"               \
