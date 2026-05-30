@@ -30,7 +30,7 @@ jobs:
     container:
       image: ghcr.io/pkgforge-dev/archlinux:latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: prepare container
         run: /bin/sh ./bin/prepare-build
